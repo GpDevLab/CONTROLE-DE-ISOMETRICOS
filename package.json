@@ -1,0 +1,27 @@
+{
+  "name": "controle-materiais-api",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "css": "^3.0.0",
+    "dxf-parser": "^1.1.2",
+    "exceljs": "^4.4.0",
+    "express": "^5.1.0",
+    "fastify": "^5.4.0",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.0.2",
+    "mysql2": "^3.14.2",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/react-toastify": "^4.0.2"
+  }
+}
