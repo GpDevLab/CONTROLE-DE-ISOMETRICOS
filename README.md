@@ -9,7 +9,7 @@ Um portal para controle de projetos e seus isométricos. Permite upload de arqui
 - Cadastro e gerenciamento de **Clientes**
 - Cadastro e gerenciamento de **Projetos**
 - Upload de arquivos `.dwg` associados a projetos
-- Controle de **revisões** e versões dos isométricos
+- Controle de **revisões** e **versões** dos isométricos
 - Geração de planilhas:
   - Planilha de upload
   - Planilha de revisões
@@ -49,7 +49,8 @@ package-lock.json
 ---
 
 # Instalar dependências
-npm install
+npm install - front
+node src/routes/server.js - beck
 
 # Rodar em modo de desenvolvimento
 npm run dev
