@@ -1,16 +1,17 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { apiUrl } from '@/lib/api';
+import { fetchJson, apiUrl, fetchRaw, downloadFromResponse } from '@/lib/api';
 import {
   UploadCloud,
   CheckCircle2,
   File as FileIcon,
   Trash2,
   Loader2,
+  Download,
 } from 'lucide-react';
 
-type Cliente = { id: number; codigo: string };
+type Cliente = { id: number; codigo: string; nome?: string };
 type Area = { id: number; nome: string; rev: number };
 
 function bytes(n: number) {
@@ -26,6 +27,7 @@ export default function UploadDWGView() {
   const [areas, setAreas] = useState<Area[]>([]);
   const [clienteId, setClienteId] = useState<number | ''>('');
   const [areaId, setAreaId] = useState<number | ''>('');
+  const [areaSelecionada, setAreaSelecionada] = useState<Area | null>(null);
 
   const [files, setFiles] = useState<File[]>([]);
   const [isDragging, setIsDragging] = useState(false);
@@ -33,27 +35,60 @@ export default function UploadDWGView() {
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [doneMsg, setDoneMsg] = useState<string | null>(null);
+  const [arquivoGerado, setArquivoGerado] = useState<string | null>(null);
 
   const inputRef = useRef<HTMLInputElement | null>(null);
 
+  // 🔹 Carregar clientes
   useEffect(() => {
-    fetch(apiUrl('/lista-clientes'))
-      .then((r) => r.json())
-      .then(setClientes)
-      .catch(() => {});
+    fetchJson<Cliente[]>('/lista-clientes')
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setClientes(data);
+        } else {
+          console.warn('Resposta inesperada de /lista-clientes:', data);
+          setClientes([]);
+        }
+      })
+      .catch((err) => {
+        console.error('Erro ao carregar clientes:', err);
+        setClientes([]);
+      });
   }, []);
 
+  // 🔹 Carregar áreas ao selecionar cliente
   useEffect(() => {
     if (!clienteId) {
       setAreas([]);
       setAreaId('');
+      setAreaSelecionada(null);
       return;
     }
-    fetch(apiUrl(`/clientes/${clienteId}/projetos`))
-      .then((r) => r.json())
-      .then(setAreas)
-      .catch(() => {});
+
+    fetchJson<Area[]>(`/clientes/${clienteId}/projetos`)
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setAreas(data);
+        } else {
+          console.warn('Resposta inesperada de /clientes/:id/projetos:', data);
+          setAreas([]);
+        }
+      })
+      .catch((err) => {
+        console.error('Erro ao carregar áreas:', err);
+        setAreas([]);
+      });
   }, [clienteId]);
+
+  // 🔹 Atualizar área selecionada
+  useEffect(() => {
+    if (areaId && areas.length > 0) {
+      const area = areas.find(a => a.id === Number(areaId));
+      setAreaSelecionada(area || null);
+    } else {
+      setAreaSelecionada(null);
+    }
+  }, [areaId, areas]);
 
   function addFiles(list: FileList | null) {
     if (!list || list.length === 0) {
@@ -76,14 +111,35 @@ export default function UploadDWGView() {
     setFiles((prev) => prev.filter((f) => f.name !== name));
   }
 
+  // 🔹 Função para baixar a planilha gerada
+  async function onDownloadPlanilha(nomeArquivo: string) {
+    try {
+      const res = await fetchRaw(`/download-planilha?path=${encodeURIComponent(nomeArquivo)}`, {
+        cache: 'no-store'
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      await downloadFromResponse(res, nomeArquivo);
+    } catch (err: any) {
+      alert(`Erro ao baixar planilha: ${err.message || 'Arquivo não encontrado'}`);
+    }
+  }
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setDoneMsg(null);
-    if (!areaId || files.length === 0) return;
+    setArquivoGerado(null);
+    
+    const currentAreaId = areaId;
+    const currentAreaSelecionada = areaSelecionada;
+    
+    if (!currentAreaId || files.length === 0 || !currentAreaSelecionada) {
+      alert('Selecione um projeto e arquivos para upload.');
+      return;
+    }
 
     const url = apiUrl('/upload-dwg');
     const form = new FormData();
-    form.append('area_id', String(areaId));
+    form.append('area_id', String(currentAreaId));
     files.forEach((f) => form.append('arquivo', f));
 
     setLoading(true);
@@ -92,6 +148,15 @@ export default function UploadDWGView() {
     await new Promise<void>((resolve) => {
       const xhr = new XMLHttpRequest();
       xhr.open('POST', url, true);
+
+      // 🔑 fetchJson já injeta token, mas no XHR temos que setar manualmente
+      const sgiToken = document.cookie
+        .split('; ')
+        .find((row) => row.startsWith('SGI_TOKEN='))
+        ?.split('=')[1];
+      if (sgiToken) {
+        xhr.setRequestHeader('Authorization', `Bearer ${sgiToken}`);
+      }
 
       xhr.upload.onprogress = (evt) => {
         if (evt.lengthComputable) {
@@ -107,11 +172,19 @@ export default function UploadDWGView() {
           try {
             const data = JSON.parse(xhr.responseText || '{}');
             if (xhr.status >= 200 && xhr.status < 300) {
-              setDoneMsg(
-                `Versão ${data.versao ?? '—'}, Rev ${data.rev ?? '—'}. Planilha: ${
-                  data.arquivoGerado ?? '—'
-                }`
-              );
+              const mensagem = `Versão ${data.versao ?? '—'}, Rev ${data.rev ?? '—'}. Planilha: ${
+                data.arquivoGerado ?? '—'
+              }`;
+              setDoneMsg(mensagem);
+              setArquivoGerado(data.arquivoGerado);
+
+              // 🔹 FAZ DOWNLOAD AUTOMÁTICO DA PLANILHA
+              if (data.arquivoGerado) {
+                setTimeout(() => {
+                  onDownloadPlanilha(data.arquivoGerado);
+                }, 1000);
+              }
+
               setFiles([]);
               if (inputRef.current) inputRef.current.value = '';
               setProgress(100);
@@ -137,173 +210,144 @@ export default function UploadDWGView() {
   }
 
   return (
-    <section className="space-y-6">
-      <header>
-        <h1 className="text-2xl font-semibold">Subir DWG</h1>
-        <p className="text-sm text-neutral-500">
-          Converta e processe arquivos .dwg (múltiplos) para um projeto.
-        </p>
-      </header>
+    <div className="space-y-6">
+      <h2 className="text-xl font-semibold">Subir DWG</h2>
+      <p className="text-sm text-neutral-600">
+        Converta e processe arquivos .dwg (múltiplos) para um projeto.
+      </p>
 
-      <form onSubmit={onSubmit} className="rounded-2xl border bg-white p-6">
-        {/* Filtros */}
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div>
-            <label className="mb-1 block text-xs text-neutral-500">Cliente</label>
-            <select
-              className="w-full rounded-lg border px-3 py-2"
-              value={clienteId}
-              onChange={(e) =>
-                setClienteId(e.target.value ? Number(e.target.value) : '')
-              }
-            >
-              <option value="">Selecione</option>
-              {clientes.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.codigo}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="mb-1 block text-xs text-neutral-500">Projeto</label>
-            <select
-              className="w-full rounded-lg border px-3 py-2"
-              value={areaId}
-              disabled={!clienteId}
-              onChange={(e) =>
-                setAreaId(e.target.value ? Number(e.target.value) : '')
-              }
-            >
-              <option value="">Selecione</option>
-              {areas.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.nome}
-                </option>
-              ))}
-            </select>
-          </div>
+      <form onSubmit={onSubmit} className="space-y-4">
+        <div className="flex gap-4">
+          <select
+            value={clienteId}
+            onChange={(e) => setClienteId(e.target.value ? Number(e.target.value) : '')}
+            className="flex-1 rounded border px-3 py-2"
+          >
+            <option value="">Selecione</option>
+            {clientes.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.codigo} {c.nome ? `— ${c.nome}` : ''}
+              </option>
+            ))}
+          </select>
+
+          <select
+            value={areaId}
+            onChange={(e) => setAreaId(e.target.value ? Number(e.target.value) : '')}
+            className="flex-1 rounded border px-3 py-2"
+          >
+            <option value="">Selecione</option>
+            {areas.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.nome} (Rev {a.rev})
+              </option>
+            ))}
+          </select>
         </div>
 
-        {/* Input escondido */}
-       <input
-        type="file"
-        accept=".dwg"
-        multiple
-        className="hidden"
-        onChange={(e) => addFiles(e.target.files)}
-        />
-
-        {/* Área de drop/click */}
         <div
-          onDragEnter={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            setIsDragging(true);
-          }}
           onDragOver={(e) => {
             e.preventDefault();
-            e.stopPropagation();
             setIsDragging(true);
           }}
-          onDragLeave={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            setIsDragging(false);
-          }}
+          onDragLeave={() => setIsDragging(false)}
           onDrop={(e) => {
             e.preventDefault();
-            e.stopPropagation();
             setIsDragging(false);
-            if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-              addFiles(e.dataTransfer.files);
-            } else {
-              alert('O item arrastado não é um arquivo válido.');
-            }
+            addFiles(e.dataTransfer.files);
           }}
-          className={`mt-4 flex flex-col items-center justify-center cursor-pointer rounded-xl border-2 border-dashed px-6 py-10 text-center transition ${
-            isDragging ? 'border-neutral-800 bg-neutral-50' : 'border-neutral-300'
+          className={`rounded border-2 border-dashed p-8 text-center ${
+            isDragging ? 'border-blue-400 bg-blue-50' : 'border-neutral-300'
           }`}
-          onClick={() => inputRef.current?.click()}
         >
-          <UploadCloud className="mx-auto h-8 w-8 text-neutral-600" />
-          <p className="mt-2 text-sm text-neutral-700">
-            Arraste seus <strong>.dwg</strong> aqui
-          </p>
-          <p className="text-xs text-neutral-500">ou clique para escolher</p>
-
-          {files.length > 0 && (
-            <p className="mt-3 text-xs text-neutral-500">
-              {files.length} arquivo(s) •{' '}
-              {bytes(files.reduce((a, f) => a + f.size, 0))}
-            </p>
-          )}
+          <input
+            ref={inputRef}
+            type="file"
+            multiple
+            accept=".dwg"
+            onChange={(e) => addFiles(e.target.files)}
+            className="hidden"
+            id="dwg-input"
+          />
+          <label htmlFor="dwg-input" className="cursor-pointer">
+            <UploadCloud className="mx-auto mb-2 h-8 w-8 text-neutral-400" />
+            <span>
+              Arraste seus <span className="font-medium">.dwg</span> aqui <br />
+              <span className="text-sm text-neutral-500">ou clique para escolher</span>
+            </span>
+          </label>
         </div>
 
-        {/* Lista de arquivos */}
         {files.length > 0 && (
-          <ul className="mt-4 divide-y rounded-lg border">
+          <ul className="space-y-2">
             {files.map((f) => (
               <li
                 key={f.name}
-                className="flex items-center justify-between gap-3 px-3 py-2"
+                className="flex items-center justify-between rounded border px-3 py-2 text-sm"
               >
-                <div className="flex min-w-0 items-center gap-2">
+                <span className="flex items-center gap-2">
                   <FileIcon className="h-4 w-4 text-neutral-500" />
-                  <span className="truncate text-sm">{f.name}</span>
-                  <span className="shrink-0 text-xs text-neutral-500">
-                    • {bytes(f.size)}
-                  </span>
-                </div>
+                  {f.name} <span className="text-neutral-400">({bytes(f.size)})</span>
+                </span>
                 <button
                   type="button"
                   onClick={() => removeFile(f.name)}
-                  className="pressable rounded-md border px-2 py-1 text-xs hover:bg-neutral-50"
-                  title="Remover"
+                  className="text-red-500 hover:text-red-700"
                 >
-                  <Trash2 className="h-3.5 w-3.5" />
+                  <Trash2 className="h-4 w-4" />
                 </button>
               </li>
             ))}
           </ul>
         )}
-        
-        {/* Progresso */}
+
+        <button
+          type="submit"
+          disabled={loading || files.length === 0 || !areaId}
+          className="rounded bg-neutral-800 px-4 py-2 text-white disabled:opacity-50"
+        >
+          {loading ? (
+            <span className="flex items-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin" /> Enviando...
+            </span>
+          ) : (
+            'Enviar'
+          )}
+        </button>
+
         {loading && (
-          <div className="mt-4">
-            <div className="flex items-center gap-2 text-sm">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Enviando…
-            </div>
-            <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-neutral-200">
-              <div
-                className="h-2 rounded-full bg-neutral-900 transition-[width]"
-                style={{ width: `${progress}%` }}
-              />
-            </div>
-            <p className="mt-1 text-right text-xs text-neutral-500">
-              {progress}%
-            </p>
+          <div className="w-full rounded bg-neutral-100">
+            <div
+              className="h-2 rounded bg-blue-500 transition-all"
+              style={{ width: `${progress}%` }}
+            />
           </div>
         )}
 
-        <div className="mt-6 flex items-center justify-between">
-          <button
-            disabled={loading || !areaId || files.length === 0}
-            className="pressable inline-flex items-center gap-2 rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-60"
-          >
-            <UploadCloud className="h-4 w-4" />
-            {loading ? 'Enviando…' : 'Enviar'}
-          </button>
-
-          {doneMsg && (
-            <div className="inline-flex items-center gap-2 text-sm text-emerald-700">
-              <CheckCircle2 className="h-4 w-4" />
-              {doneMsg}
+        {doneMsg && (
+          <div className="space-y-3 rounded border border-green-200 bg-green-50 p-4">
+            <div className="flex items-center gap-2 text-green-600">
+              <CheckCircle2 className="h-5 w-5" /> 
+              <span className="font-medium">Upload concluído com sucesso!</span>
             </div>
-          )}
-        </div>
+            <p className="text-sm text-green-700">{doneMsg}</p>
+            
+            {/* Botão para baixar novamente caso queira */}
+            {arquivoGerado && (
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={() => onDownloadPlanilha(arquivoGerado)}
+                  className="flex items-center gap-2 rounded bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700"
+                >
+                  <Download className="h-4 w-4" />
+                  Baixar Planilha Novamente
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </form>
-    </section>
+    </div>
   );
 }

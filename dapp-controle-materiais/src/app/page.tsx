@@ -19,12 +19,12 @@ export default function Home() {
 
   // Troca o token do portal pelo do SGI
   useEffect(() => {
-    const gpPortalToken = getCookie('gpPortalToken');
-    if (gpPortalToken) {
-      fetch('http://10.71.0.200:5000/api/auth/exchange-token', {
+    const portalToken = getCookie('token'); 
+    if (portalToken) {
+      fetch('http://10.71.0.195:5000/api/auth/exchange-token', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${gpPortalToken}`,
+          'Authorization': `Bearer ${portalToken}`,
           'Content-Type': 'application/json'
         }
       })
@@ -32,17 +32,16 @@ export default function Home() {
         .then(data => {
           if (data.SGI_TOKEN) {
             document.cookie = `SGI_TOKEN=${data.SGI_TOKEN}; path=/;`;
-            setSgiTokenReady(true); // Marca que o token está pronto
+            setSgiTokenReady(true); 
           }
         });
     }
   }, []);
-
-  // Só busca clientes quando o SGI_TOKEN estiver pronto
+    
   useEffect(() => {
-    if (!sgiTokenReady) return;
-    const sgiToken = getCookie('SGI_TOKEN');
-    fetch('http://10.71.0.200:5000/lista-clientes', {
+  const sgiToken = getCookie('SGI_TOKEN');
+  if (sgiToken) {
+    fetch('http://localhost:5000/lista-clientes', {
       headers: {
         'Authorization': `Bearer ${sgiToken}`,
         'Content-Type': 'application/json'
@@ -50,9 +49,10 @@ export default function Home() {
     })
       .then(res => res.json())
       .then(data => {
-        // ... use os dados dos clientes
+        console.log("Clientes:", data);
       });
-  }, [sgiTokenReady]);
+  }
+}, [sgiTokenReady]);
 
   useEffect(() => {
     const v = location.hash.replace('#', '');

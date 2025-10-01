@@ -1,59 +1,50 @@
-export const API =
-  process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || "http://127.0.0.1:5000";
-
+// api.ts
 export function apiUrl(path: string) {
-  if (path.startsWith("http://") || path.startsWith("https://")) return path;
-  const p = path.startsWith("/") ? path : `/${path}`;
-  return `${API}${p}`;
-  
+  return path.startsWith('http') ? path : `${process.env.NEXT_PUBLIC_API_URL || ''}${path}`;
 }
-export async function fetchJson<T = any>(
-  path: string,
-  init?: RequestInit
-): Promise<T> {
-  const url = apiUrl(path);
-  const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
 
-  console.log("fetch ->", url);
+// Busca o token JWT armazenado no cookie
+function getToken(): string | null {
+  return document.cookie.split('; ').find(row => row.startsWith('SGI_TOKEN='))?.split('=')[1] ?? null;
+}
 
-  const res = await fetch(url, {
-    cache: "no-store",
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers || {}),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-  });
-
+// Fetch JSON com token
+export async function fetchJson<T>(url: string, options: RequestInit = {}): Promise<T> {
+  const token = getToken();
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...options.headers,
+  };
+  const res = await fetch(apiUrl(url), { ...options, headers });
   if (!res.ok) {
-    const msg = await safeText(res);
-    throw new Error(`HTTP ${res.status} - ${msg || res.statusText}`);
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); } catch { data = text; }
+    throw new Error(data?.erro || res.statusText);
   }
-  return (await res.json()) as T;
+  return res.json();
 }
 
-export async function downloadFromResponse(res: Response, fallbackName: string) {
+// Fetch "raw" (blob) com token, útil para downloads
+export async function fetchRaw(url: string, options: RequestInit = {}): Promise<Response> {
+  const token = getToken();
+  const headers = {
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...options.headers,
+  };
+  return fetch(apiUrl(url), { ...options, headers });
+}
+
+// Função de download a partir do Response
+export async function downloadFromResponse(res: Response, filename: string) {
   const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-
-  const cd = res.headers.get("content-disposition") || "";
-  const m = cd.match(/filename="?([^"]+)"?/i);
-
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
   a.href = url;
-  a.download = m?.[1] ?? fallbackName;
+  a.download = filename;
   document.body.appendChild(a);
   a.click();
   a.remove();
-  URL.revokeObjectURL(url);
+  window.URL.revokeObjectURL(url);
 }
-
-async function safeText(r: Response) {
-  try {
-    return await r.text();
-  } catch {
-    return "";
-  }
-}
-                                                                                                                                               

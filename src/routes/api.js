@@ -22,17 +22,7 @@ const {
 } = require('../modules/area-utils');
 const jwt = require('jsonwebtoken');
 
-function autenticarToken(req, res, next) {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
-  if (!token) return res.sendStatus(401);
-
-  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
-    if (err) return res.sendStatus(403);
-    req.user = user;
-    next();
-  });
-}
+const validarToken = require('../modules/auth.js');
 
 // Configuração do multer
 const storage = multer.diskStorage({
@@ -50,16 +40,17 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
+// Autentificador do token
 router.post('/api/auth/exchange-token', (req, res) => {
   const authHeader = req.headers['authorization'];
-  const tokenPortal = authHeader && authHeader.split(' ')[1];
-  if (!tokenPortal) return res.status(401).json({ erro: 'Token do portal ausente' });
+  const token = authHeader && authHeader.split(' ')[1];
+  if (!token) return res.status(401).json({ erro: 'Token do portal ausente' });
 
-  // Valide o token do portal
-  jwt.verify(tokenPortal, process.env.JWT_SECRET_PORTAL, (err, user) => {
+  // Valida o token do portal
+  jwt.verify(token, process.env.jwtSecret, (err, user) => {
     if (err) return res.status(403).json({ erro: 'Token do portal inválido' });
 
-    // Gere o token do SGI
+    // Gera o token do SGI
     const SGI_TOKEN = jwt.sign(
       { id: user.id, nome: user.nome },
       process.env.JWT_SECRET_SGI,
@@ -75,7 +66,7 @@ router.post('/api/auth/exchange-token', (req, res) => {
 // ROTAS GET
 
 // Info da área (rev e última versão dessa rev)
-router.get('/areas/:area_id/info', async (req, res) => {
+router.get('/areas/:area_id/info', validarToken, async(req,res) => {
   try {
     const area_id = Number(req.params.area_id);
     const [rowsA] = await db.query('SELECT rev FROM area WHERE id = ?', [area_id]);
@@ -95,7 +86,7 @@ router.get('/areas/:area_id/info', async (req, res) => {
 });
 
 // Lista versões existentes de uma revisão
-router.get('/areas/:area_id/rev/:rev/versoes', async (req, res) => {
+router.get('/areas/:area_id/rev/:rev/versoes', validarToken, async(req,res) => {
   try {
     const area_id = Number(req.params.area_id);
     const rev = Number(req.params.rev);
@@ -111,7 +102,7 @@ router.get('/areas/:area_id/rev/:rev/versoes', async (req, res) => {
   }
 });
 
-router.get('/areas/:area_id/rev/:rev/versao/:versao/download', async (req, res) => {
+router.get('/areas/:area_id/rev/:rev/versao/:versao/download', validarToken, async(req,res) => {
   try {
     const area_id = Number(req.params.area_id);
     const rev = Number(req.params.rev);
@@ -134,7 +125,7 @@ router.get('/areas/:area_id/rev/:rev/versao/:versao/download', async (req, res) 
 });
  
 // Listar clientes
-router.get('/lista-clientes', async (req, res) => {
+router.get('/lista-clientes', validarToken, async (req, res) => {
   try {
     const [rows] = await db.query('SELECT id, codigo FROM projeto');
     res.json(rows);
@@ -146,7 +137,7 @@ router.get('/lista-clientes', async (req, res) => {
 });
 
 // Listar projeto dos clientes
-router.get('/clientes/:id/projetos', async (req, res) => {
+router.get('/clientes/:id/projetos', validarToken, async (req, res) => {
   const clienteId = req.params.id;
 
   try {
@@ -162,7 +153,7 @@ router.get('/clientes/:id/projetos', async (req, res) => {
 });
 
 // Listar materiais
-router.get('/materiais', async (req, res) => {
+router.get('/materiais', validarToken, async (req, res) => {
   try {
     const [rows] = await db.query('SELECT * FROM isometricos_gerados');
     res.json(rows);
@@ -172,7 +163,7 @@ router.get('/materiais', async (req, res) => {
 });
 
 // Rota GET de conversão de pasta inteira (usada para testes em lote)
-router.get('/converter-dwg', async (req, res) => {
+router.get('/converter-dwg', validarToken, async (req, res) => {
   try {
     const inputFolder = path.resolve(__dirname, '../../arquivos-dwg');
     const outputFolder = path.resolve(__dirname, '../../arquivos-dwg/convertido-dxf');
@@ -217,7 +208,7 @@ router.get('/converter-dwg', async (req, res) => {
 });
 
 // Gerar relatorio de isometricos
-router.get('/mapa-total/:area_id', async (req, res) => {
+router.get('/mapa-total/:area_id', validarToken, async (req, res) => {
   try {
     const area_id = req.params.area_id;
     const [areaRows] = await db.query('SELECT nome, rev FROM area WHERE id = ?', [area_id]);
@@ -257,7 +248,7 @@ router.get('/mapa-total/:area_id', async (req, res) => {
 });
 
 // Baixar comparação
-router.get('/comparar-revisoes/download/:arquivo', (req, res) => {
+router.get('/comparar-revisoes/download/:arquivo', validarToken, (req, res) => {
   const { arquivo } = req.params;
 
   const caminho = path.resolve('planilhas-comparacoes', arquivo);
@@ -268,7 +259,8 @@ router.get('/comparar-revisoes/download/:arquivo', (req, res) => {
   res.download(caminho, arquivo);
 });
 
-router.get('/areas/:areaId/rev/:rev/ultima-versao', async (req, res) => {
+// Baixar ultima rev
+router.get('/areas/:areaId/rev/:rev/ultima-versao', validarToken, async (req, res) => {
   const { areaId, rev } = req.params;
   try {
     const [rows] = await db.execute(`
@@ -284,14 +276,15 @@ router.get('/areas/:areaId/rev/:rev/ultima-versao', async (req, res) => {
   }
 });
 
-router.get('/download-planilha', (req, res) => {
+// Baixar planilha
+router.get('/download-planilha',  validarToken, (req, res) => {
   const { path: arquivo } = req.query;
   const caminho = path.resolve('planilhas-geradas', arquivo);
   if (!fs.existsSync(caminho)) return res.status(404).send('Arquivo não encontrado');
   return res.download(caminho);
 });
 
-router.get('/areas/:area_id/revisoes', async (req, res) => {
+router.get('/areas/:area_id/revisoes',  validarToken, async (req, res) => {
   const { area_id } = req.params;
   try {
     const [rows] = await db.execute(`
@@ -324,29 +317,8 @@ router.get('/areas/:area_id/revisoes', async (req, res) => {
 
 // POST 
 
-router.post('/login', async (req, res) => {
-  const { email, password } = req.body;
-  // Busca usuário pelo email
-  const [rows] = await db.query('SELECT id, nome, password FROM user WHERE email = ?', [email]);
-  if (!rows.length) return res.status(401).json({ erro: 'Usuário ou senha inválidos' });
-  const user = rows[0];
-
-  // Senha está criptografada:
-  const senhaOk = await bcrypt.compare(password, user.password);
-  if (!senhaOk) return res.status(401).json({ erro: 'Usuário ou senha inválidos' });
-
-  // Gera o token JWT
-  const token = jwt.sign(
-    { id: user.id, nome: user.nome },
-    process.env.JWT_SECRET,
-    { expiresIn: '8h' }
-  );
-
-  res.json({ token });
-});
-
 // Upload e processamento de DWG
-router.post('/upload-dwg', upload.array('arquivo', 20), async (req, res) => {
+router.post('/upload-dwg', upload.array('arquivo', 20),  validarToken, async (req, res) => {
   try {
     const { area_id } = req.body;
     if (!area_id) {
@@ -415,29 +387,25 @@ router.post('/upload-dwg', upload.array('arquivo', 20), async (req, res) => {
 });
 
 // Comparar revisões
-router.post('/comparar-revisoes/:area_id/:rev1/:rev2', async (req, res) => {
+router.post('/comparar-revisoes/:area_id/:rev1/:rev2',  validarToken, async (req, res) => {
   try {
     const { area_id, rev1, rev2 } = req.params;
 
-    // 0) Dados da área e do "projeto" (exibição)
     const [areaRows] = await db.query('SELECT nome, projeto_id FROM area WHERE id = ?', [area_id]);
     if (!areaRows.length) return res.status(404).json({ erro: 'Área não encontrada.' });
     const nomeArea   = areaRows[0].nome;
     const projeto_id = areaRows[0].projeto_id;
 
-    // tabela projeto não tem "nome"; usamos codigo se precisar em outro lugar
     const [projRows] = await db.query('SELECT codigo AS codigoProjeto FROM projeto WHERE id = ?', [projeto_id]);
     const codigoProjeto = projRows?.[0]?.codigoProjeto || '';
-    // o nome exibido no relatório será o da área
+
     const nomeProjeto = nomeArea;
 
-    // 1) Permite forçar caminhos via query/body
     const body = req.body || {};
     const q    = req.query || {};
-    const paramArq1 = body.arq1 || q.arq1; // caminho completo opcional
+    const paramArq1 = body.arq1 || q.arq1; 
     const paramArq2 = body.arq2 || q.arq2;
 
-    // 2) Candidatos por padrão de nome
     const pastaRevisoes = path.resolve('planilhas-revisoes');
     const pastaUploads  = path.resolve('uploads');
 
@@ -448,11 +416,9 @@ router.post('/comparar-revisoes/:area_id/:rev1/:rev2', async (req, res) => {
 
     const pick = (arr) => arr.find(p => fs.existsSync(p));
 
-    // 3) Resolve caminhos priorizando arq* -> candidatos
     let caminho1 = paramArq1 ? path.resolve(paramArq1) : pick(candidatos(rev1));
     let caminho2 = paramArq2 ? path.resolve(paramArq2) : pick(candidatos(rev2));
 
-    // 4) Se ambos arquivos existem, comparar direto (sem DB)
     if (caminho1 && caminho2 && fs.existsSync(caminho1) && fs.existsSync(caminho2)) {
       const lista1 = await lerMapaRevisaoDoTemplate(caminho1, 'antiga', { strict: true }); // AV
       const lista2 = await lerMapaRevisaoDoTemplate(caminho2, 'nova',   { strict: true }); // BB
@@ -467,7 +433,7 @@ console.log('dif:', {
 });
       const nomeArquivo = await gerarPlanilhaDiferencas(
         diferencas,
-        nomeProjeto, // usamos o nome da área como "nome do projeto" visível
+        nomeProjeto,
         nomeArea,
         Number(rev1),
         Number(rev2)
@@ -477,7 +443,6 @@ console.log('dif:', {
       return res.download(caminhoSaida, nomeArquivo);
     }
 
-    // 5) Se NÃO achou arquivos, tenta via DB (apenas para garantir existência das revisões)
     const [versaoRows1] = await db.query(
       'SELECT MAX(versao) AS versao FROM isometricos_gerados WHERE area_id = ? AND rev = ?',
       [area_id, rev1]
@@ -493,15 +458,14 @@ console.log('dif:', {
       return res.status(404).json({ erro: 'Não foi possível encontrar as versões das revisões informadas.' });
     }
 
-    // 6) Com versões presentes, espera-se ter planilhas no padrão
     const caminhoPadrao1 = path.join(pastaRevisoes, `${nomeArea}_revisao_${rev1}.xlsx`);
     const caminhoPadrao2 = path.join(pastaRevisoes, `${nomeArea}_revisao_${rev2}.xlsx`);
     if (!fs.existsSync(caminhoPadrao1) || !fs.existsSync(caminhoPadrao2)) {
       return res.status(404).json({ erro: 'Um ou ambos os arquivos de revisão não foram encontrados.' });
     }
 
-    const lista1 = await lerMapaRevisaoDoTemplate(caminho1); // rev1 (BB)
-    const lista2 = await lerMapaRevisaoDoTemplate(caminho2); // rev2 (BB)
+    const lista1 = await lerMapaRevisaoDoTemplate(caminho1); // rev1 
+    const lista2 = await lerMapaRevisaoDoTemplate(caminho2); // rev2 
 
     const diferencas = compararMapasRevisao(lista1, lista2).filter(d =>
       d.status === 'ALTERADO' || d.status === 'ADICIONADO'
@@ -525,7 +489,7 @@ console.log('dif:', {
 });
 
 // Criar clientes
-router.post('/clientes', async (req, res) => {
+router.post('/clientes', validarToken, async (req, res) => {
   const { codigo } = req.body;
   if (!codigo) return res.status(400).json({ erro: 'O campo "codigo" é obrigatório.' });
 
@@ -539,7 +503,7 @@ router.post('/clientes', async (req, res) => {
 });
 
 // Criar projetos
-router.post('/projetos', async (req, res) => {
+router.post('/projetos', validarToken, async (req, res) => {
   const { nome, projeto_id } = req.body;
   if (!nome || !projeto_id) return res.status(400).json({ erro: 'Campos "nome" e "projeto_id" são obrigatórios.' });
 
@@ -556,7 +520,7 @@ router.post('/projetos', async (req, res) => {
 });
 
 // Subir revisão
-router.post('/subir-rev', async (req, res) => {
+router.post('/subir-rev', validarToken, async (req, res) => {
   const { area_id } = req.body;
 
   if (!area_id) {
@@ -599,32 +563,35 @@ router.post('/subir-rev', async (req, res) => {
     ]);
 
     // 4) Gera a planilha da revisão ATUAL (que está sendo fechada)
-    const nomeArquivo = await gerarPlanilhaRevisaoUpload(
+    const nomeArquivoGerado = await gerarPlanilhaRevisaoUpload(
       itensFiltrados,
       nomeProjeto,
       revAtual,
       area_id
-    ); // ex.: `${nomeProjeto}_revisao_${revAtual}.xlsx`
+    );
 
     // 5) Sobe a revisão para a próxima
     const novaRev = revAtual + 1;
     await db.execute('UPDATE area SET rev = ? WHERE id = ?', [novaRev, area_id]);
 
-    // 6) Força DOWNLOAD do arquivo gerado
-    const filePath = path.resolve('planilhas-revisoes', nomeArquivo);
+    // 6) Define o nome do arquivo para download no padrão correto
+    const nomeArquivoDownload = `${nomeProjeto}_rev_${revAtual}.xlsx`;
 
-    // Metadados úteis via header (opcional, o front pode ler se quiser)
+    // 7) Força DOWNLOAD do arquivo gerado
+    const filePath = path.resolve('planilhas-revisoes', nomeArquivoGerado);
+
+    // Metadados úteis via header
     res.setHeader('X-Nova-Rev', String(novaRev));
     res.setHeader('X-Versao-Final', String(versaoFinalizada));
     res.setHeader(
       'Content-Type',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     );
+    res.setHeader('Content-Disposition', `attachment; filename="${nomeArquivoDownload}"`);
 
-    return res.download(filePath, nomeArquivo, (err) => {
+    return res.download(filePath, nomeArquivoDownload, (err) => {
       if (err) {
         console.error('Falha ao enviar download:', err);
-        // Se o download falhar, devolve um erro legível
         if (!res.headersSent) {
           res
             .status(500)
@@ -641,7 +608,7 @@ router.post('/subir-rev', async (req, res) => {
 });
 
 // Subir EXCEL para BD
-router.post('/upload-planilha', upload.single('arquivo'), async (req, res) => {
+router.post('/upload-planilha', upload.single('arquivo'),  validarToken, async (req, res) => {
   try {
     const { area_id } = req.body;
     if (!area_id) {
@@ -718,7 +685,7 @@ router.post('/upload-planilha', upload.single('arquivo'), async (req, res) => {
 // PUT
 
 // Alterar ID de cliente
-router.put('/clientes/trocar', async (req, res) => {
+router.put('/clientes/trocar', validarToken, async (req, res) => {
  const { projeto_id, novo_cliente_id } = req.body;
 
   try {
@@ -772,7 +739,7 @@ router.put('/clientes/trocar', async (req, res) => {
 // DELETE
 
 // Deletar cliente
-router.delete('/clientes/remover/:id', async (req, res) => {
+router.delete('/clientes/remover/:id', validarToken, async (req, res) => {
   try {
     const id = req.params.id;
 
@@ -803,7 +770,7 @@ router.delete('/clientes/remover/:id', async (req, res) => {
 });
 
 // Deletar projeto
-router.delete('/projetos/remover', async (req, res) => {
+router.delete('/projetos/remover', validarToken, async (req, res) => {
   const { projeto_id, area_id } = req.body;
   let conn;
 
